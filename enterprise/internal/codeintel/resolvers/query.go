@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 
 	"github.com/sourcegraph/go-diff/diff"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
@@ -213,23 +212,54 @@ type Position struct {
 	Character int32
 }
 
-func (r *lsifQueryResolver) adjustPosition(ctx context.Context, commit string, line, character int32) (*Position, error) {
-	base := commit
-	head := string(r.commit)
-
-	if base == head {
-		return &Position{
-			Line:      line,
-			Character: character,
-		}, nil
+func (r *lsifQueryResolver) adjustPosition(ctx context.Context, uploadCommit string, line, character int32) (*Position, error) {
+	lineDelta, err := r.getLineDelta(ctx, uploadCommit, line, character)
+	if err != nil {
+		return nil, err
 	}
 
+	return &Position{
+		Line:      line + lineDelta,
+		Character: character,
+	}, nil
+}
+
+func (r *lsifQueryResolver) getLineDelta(ctx context.Context, uploadCommit string, line int32) (int32, error) {
+	if uploadCommit == r.commit {
+		return 0, nil
+	}
+
+	hunks, err := r.getHunks(ctx, uploadCommit)
+	if err != nil {
+		return 0, err
+	}
+
+	lineDelta := int32(0)
+	for _, hunk := range hunks {
+
+		// Notes:
+		// Original File -> what's in the LSIF dump
+		// New file -> the requested file
+
+		// TODO: Fail if in middle of chunk
+
+		if hunk.NewStartLine > line {
+			break
+		}
+
+		lineDelta += (hunk.OrigLines - hunk.NewLines)
+	}
+
+	return lineDelta
+}
+
+func (r *lsifQueryResolver) getHunks(ctx context.Context, uploadCommit string) ([]*diff.Hunk, error) {
 	cachedRepo, err := backend.CachedGitRepo(ctx, r.repositoryResolver.Type())
 	if err != nil {
 		return nil, err
 	}
 
-	rdr, err := git.ExecReader(ctx, *cachedRepo, []string{"diff", base, head, "--", r.path})
+	rdr, err := git.ExecReader(ctx, *cachedRepo, []string{"diff", uploadCommit, r.commit, "--", r.path})
 	if err != nil {
 		return nil, err
 	}
@@ -240,13 +270,5 @@ func (r *lsifQueryResolver) adjustPosition(ctx context.Context, commit string, l
 		return nil, err
 	}
 
-	for _, hunk := range diff.Hunks {
-		// TODO
-		fmt.Printf("SHIFTING %d (len %d) -> %d (len %d)\n", hunk.OrigStartLine, hunk.OrigLines, hunk.NewStartLine, hunk.NewLines)
-	}
-
-	return &Position{
-		Line:      line,
-		Character: character,
-	}, nil
+	return diff.hunks, nil
 }
