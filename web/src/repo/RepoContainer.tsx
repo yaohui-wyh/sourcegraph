@@ -29,6 +29,7 @@ import { RepositoryNotFoundPage } from './RepositoryNotFoundPage'
 import { ThemeProps } from '../../../shared/src/theme'
 import { RepoSettingsAreaRoute } from './settings/RepoSettingsArea'
 import { RepoSettingsSideBarItem } from './settings/RepoSettingsSidebar'
+import { ErrorMessage } from '../components/alerts'
 
 /**
  * Props passed to sub-routes of {@link RepoContainer}.
@@ -228,7 +229,13 @@ export class RepoContainer extends React.Component<RepoContainerProps, RepoRevCo
                 case EREPONOTFOUND:
                     return <RepositoryNotFoundPage repo={repoName} viewerCanAdminister={viewerCanAdminister} />
                 default:
-                    return <HeroPage icon={AlertCircleIcon} title="Error" subtitle={this.state.repoOrError.message} />
+                    return (
+                        <HeroPage
+                            icon={AlertCircleIcon}
+                            title="Error"
+                            subtitle={<ErrorMessage error={this.state.repoOrError} />}
+                        />
+                    )
             }
         }
 
@@ -295,7 +302,7 @@ export class RepoContainer extends React.Component<RepoContainerProps, RepoRevCo
                         {/* eslint-disable react/jsx-no-bind */}
                         {[
                             '',
-                            `@${this.state.rawRev}`, // must exactly match how the rev was encoded in the URL
+                            ...(this.state.rawRev ? [`@${this.state.rawRev}`] : []), // must exactly match how the rev was encoded in the URL
                             '/-/blob',
                             '/-/tree',
                             '/-/commits',

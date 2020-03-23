@@ -1,11 +1,11 @@
 import * as pgModels from '../../shared/models/pg'
 import * as settings from '../settings'
-import * as validation from '../middleware/validation'
+import * as validation from '../../shared/api/middleware/validation'
 import express from 'express'
-import { nextLink } from '../pagination/link'
+import { nextLink } from '../../shared/api/pagination/link'
 import { wrap } from 'async-middleware'
-import { extractLimitOffset } from '../pagination/limit-offset'
-import { UploadManager } from '../../shared/store/uploads'
+import { extractLimitOffset } from '../../shared/api/pagination/limit-offset'
+import { UploadManager, LsifUploadWithPlaceInQueue } from '../../shared/store/uploads'
 import { DumpManager } from '../../shared/store/dumps'
 import { EntityManager } from 'typeorm'
 import { SRC_FRONTEND_INTERNAL } from '../../shared/config/settings'
@@ -46,10 +46,12 @@ export function createUploadRouter(
         visibleAtTip?: boolean
     }
 
+    type UploadResponse = LsifUploadWithPlaceInQueue
+
     router.get(
         '/uploads/:id([0-9]+)',
         wrap(
-            async (req: express.Request, res: express.Response): Promise<void> => {
+            async (req: express.Request, res: express.Response<UploadResponse>): Promise<void> => {
                 const upload = await uploadManager.getUpload(parseInt(req.params.id, 10))
                 if (upload) {
                     res.send(upload)
@@ -66,7 +68,7 @@ export function createUploadRouter(
     router.delete(
         '/uploads/:id([0-9]+)',
         wrap(
-            async (req: express.Request, res: express.Response): Promise<void> => {
+            async (req: express.Request, res: express.Response<never>): Promise<void> => {
                 const id = parseInt(req.params.id, 10)
                 const ctx = createTracingContext(req, { id })
 
@@ -91,6 +93,11 @@ export function createUploadRouter(
         )
     )
 
+    interface UploadsResponse {
+        uploads: LsifUploadWithPlaceInQueue[]
+        totalCount: number
+    }
+
     router.get(
         '/uploads/repository/:id([0-9]+)',
         validation.validationMiddleware([
@@ -101,7 +108,7 @@ export function createUploadRouter(
             validation.validateOffset,
         ]),
         wrap(
-            async (req: express.Request, res: express.Response): Promise<void> => {
+            async (req: express.Request, res: express.Response<UploadsResponse>): Promise<void> => {
                 const { query, state, visibleAtTip }: UploadsQueryArgs = req.query
                 const { limit, offset } = extractLimitOffset(req.query, settings.DEFAULT_UPLOAD_PAGE_SIZE)
                 const { uploads, totalCount } = await uploadManager.getUploads(

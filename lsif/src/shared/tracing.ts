@@ -6,17 +6,13 @@ import { Span, Tracer } from 'opentracing'
 
 /**
  * A bag of logging and tracing instances passed around a current
- * HTTP request or worker upload conversion.
+ * HTTP request or upload conversion.
  */
 export interface TracingContext {
-    /**
-     * The current tagged logger instance. Optional for testing.
-     */
+    /** The current tagged logger instance. Optional for testing. */
     logger?: Logger
 
-    /**
-     * The current opentracing span. Optional for testing.
-     */
+    /** The current opentracing span. Optional for testing. */
     span?: Span
 }
 

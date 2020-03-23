@@ -8,12 +8,20 @@ import classNames from 'classnames'
 import { changesetStateIcons, changesetStatusColorClasses } from '../detail/changesets/presentation'
 import formatDistance from 'date-fns/formatDistance'
 import parseISO from 'date-fns/parseISO'
+import { DraftBadge } from '../DraftBadge'
+
+export type CampaignNodeCampaign = Pick<
+    GQL.ICampaign,
+    'id' | 'closedAt' | 'name' | 'description' | 'createdAt' | 'publishedAt'
+> & {
+    changesets: {
+        nodes: Pick<GQL.IExternalChangeset, 'state'>[]
+    }
+    patches: Pick<GQL.IPatchConnection, 'totalCount'>
+}
 
 export interface CampaignNodeProps {
-    node: Pick<
-        GQL.ICampaign,
-        'id' | 'closedAt' | 'name' | 'description' | 'changesets' | 'changesetPlans' | 'createdAt'
-    >
+    node: CampaignNodeCampaign
     /** Renders a selection button next to the campaign, used to select a campaign for update */
     selection?: {
         enabled: boolean
@@ -48,6 +56,7 @@ export const CampaignNode: React.FunctionComponent<CampaignNodeProps> = ({ node,
                         <small className="ml-2 text-muted" data-tooltip={node.createdAt}>
                             created {formatDistance(parseISO(node.createdAt), now)} ago
                         </small>
+                        {!node.publishedAt && <DraftBadge className="ml-2" />}
                     </div>
                     <Markdown
                         className={classNames(
@@ -58,10 +67,10 @@ export const CampaignNode: React.FunctionComponent<CampaignNodeProps> = ({ node,
                         dangerousInnerHTML={
                             node.description ? renderMarkdown(node.description, { plainText: true }) : 'No description'
                         }
-                    ></Markdown>
+                    />
                 </div>
                 <div data-tooltip="Open changesets">
-                    {changesetCountByState(GQL.ChangesetState.OPEN) + node.changesetPlans.totalCount}{' '}
+                    {changesetCountByState(GQL.ChangesetState.OPEN) + node.patches.totalCount}{' '}
                     <OpenChangesetIcon className={`text-${changesetStatusColorClasses.OPEN} ml-1 mr-2`} />
                 </div>
                 <div data-tooltip="Merged changesets">

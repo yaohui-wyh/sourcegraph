@@ -19,9 +19,10 @@ async function init(): Promise<void> {
      * This is the main entry point for the phabricator in-page JavaScript plugin.
      */
     if (window.localStorage && window.localStorage.getItem('SOURCEGRAPH_DISABLED') === 'true') {
+        const value = window.localStorage.getItem('SOURCEGRAPH_DISABLED')
         console.log(
-            `Sourcegraph on Phabricator is disabled because window.localStorage.getItem('SOURCEGRAPH_DISABLED') is set to ${window.localStorage.getItem(
-                'SOURCEGRAPH_DISABLED'
+            `Sourcegraph on Phabricator is disabled because window.localStorage.getItem('SOURCEGRAPH_DISABLED') is set to ${String(
+                value
             )}.`
         )
         return
@@ -38,7 +39,7 @@ async function init(): Promise<void> {
     // so we do not need to do this here.
     if (!window.SOURCEGRAPH_BUNDLE_URL && !window.localStorage.getItem('SOURCEGRAPH_BUNDLE_URL')) {
         injectExtensionMarker()
-        await injectCodeIntelligence({ sourcegraphURL, assetsURL }, IS_EXTENSION)
+        injectCodeIntelligence({ sourcegraphURL, assetsURL }, IS_EXTENSION)
         metaClickOverride()
         return
     }
@@ -54,7 +55,7 @@ async function init(): Promise<void> {
     window.localStorage.setItem('SOURCEGRAPH_URL', sourcegraphURL)
     metaClickOverride()
     injectExtensionMarker()
-    await injectCodeIntelligence({ sourcegraphURL, assetsURL }, IS_EXTENSION)
+    injectCodeIntelligence({ sourcegraphURL, assetsURL }, IS_EXTENSION)
 }
 
 init().catch(err => console.error('Error initializing Phabricator integration', err))

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/sourcegraph/sourcegraph/internal/lazyregexp"
 )
 
 /*
@@ -27,7 +29,9 @@ func (Operator) node()  {}
 
 // Parameter is a leaf node of expressions.
 type Parameter struct {
-	Value string
+	Field   string `json:"field"`   // The repo part in repo:sourcegraph.
+	Value   string `json:"value"`   // The sourcegraph part in repo:sourcegraph.
+	Negated bool   `json:"negated"` // True if the - prefix exists, as in -repo:sourcegraph.
 }
 
 type operatorKind int
@@ -35,6 +39,7 @@ type operatorKind int
 const (
 	Or operatorKind = iota
 	And
+	Concat
 )
 
 // Operator is a nonterminal node of kind Kind with child nodes Operands.
@@ -44,7 +49,13 @@ type Operator struct {
 }
 
 func (node Parameter) String() string {
-	return node.Value
+	if node.Field == "" {
+		return node.Value
+	}
+	if node.Negated {
+		return fmt.Sprintf("-%s:%s", node.Field, node.Value)
+	}
+	return fmt.Sprintf("%s:%s", node.Field, node.Value)
 }
 
 func (node Operator) String() string {
@@ -53,11 +64,15 @@ func (node Operator) String() string {
 		result = append(result, child.String())
 	}
 	var kind string
-	if node.Kind == Or {
+	switch node.Kind {
+	case Or:
 		kind = "or"
-	} else {
+	case And:
 		kind = "and"
+	case Concat:
+		kind = "concat"
 	}
+
 	return fmt.Sprintf("(%s %s)", kind, strings.Join(result, " "))
 }
 
@@ -123,11 +138,6 @@ func (p *parser) expect(keyword keyword) bool {
 	return true
 }
 
-// isKeyword returns whether current parser position matches a reserved keyword.
-func (p *parser) isKeyword() bool {
-	return p.match(AND) || p.match(OR) || p.match(LPAREN) || p.match(RPAREN)
-}
-
 // skipSpaces advances the input and places the parser position at the next
 // non-space value.
 func (p *parser) skipSpaces() error {
@@ -142,11 +152,48 @@ func (p *parser) skipSpaces() error {
 	return nil
 }
 
-// scanParameter scans for leaf node values.
-func (p *parser) scanParameter() (string, error) {
+var fieldValuePattern = lazyregexp.New("(^-?[a-zA-Z0-9]+):(.*)")
+
+// ScanParameter returns a leaf node value usable by _any_ kind of search (e.g.,
+// literal or regexp, or...) and always succeeds.
+//
+// A parameter is a contiguous sequence of characters, where the following two forms are distinguished:
+// (1) a string of syntax field:<string> where : matches the first encountered colon, and field must match ^-?[a-zA-Z0-9]+
+// (2) <string>
+//
+// When a parameter is of form (1), the <string> corresponds to Parameter.Value, field corresponds to Parameter.Field and Parameter.Negated is set if Field starts with '-'.
+// When form (1) does not match, Value corresponds to <string> and Field is the empty string.
+//
+// The value parameter in the parse tree is only distinguished with respect to
+// the two forms above. There is no restriction on values that <string> may take
+// on. Notably, there is no interpretation of quoting or escaping, which may vary
+// depending on the search being performed. All validation with respect to such
+// properties, and how these should be interpretted, is thus context dependent
+// and handled appropriately within those contexts.
+func ScanParameter(parameter []byte) Parameter {
+	result := fieldValuePattern.FindSubmatch(parameter)
+	if result != nil {
+		if result[1][0] == '-' {
+			return Parameter{
+				Field:   string(result[1][1:]),
+				Value:   string(result[2]),
+				Negated: true,
+			}
+		}
+		return Parameter{Field: string(result[1]), Value: string(result[2])}
+	}
+	return Parameter{Field: "", Value: string(parameter)}
+}
+
+// ParseParameter returns valid leaf node values for AND/OR queries, taking into
+// account escape sequences for special syntax: whitespace and parentheses.
+func (p *parser) ParseParameter() Parameter {
 	start := p.pos
 	for {
-		if p.isKeyword() {
+		if p.expect(`\ `) || p.expect(`\(`) || p.expect(`\)`) {
+			continue
+		}
+		if p.match(LPAREN) || p.match(RPAREN) {
 			break
 		}
 		if p.done() {
@@ -157,18 +204,82 @@ func (p *parser) scanParameter() (string, error) {
 		}
 		p.pos++
 	}
-	return string(p.buf[start:p.pos]), nil
+	return ScanParameter(p.buf[start:p.pos])
+}
+
+func visit(node Node, f func(node Node)) {
+	switch v := node.(type) {
+	case Parameter:
+		f(v)
+	case Operator:
+		f(v)
+		for _, n := range v.Operands {
+			visit(n, f)
+		}
+	}
+}
+
+// containsPattern returns true if any descendent of node is a search pattern
+// (i.e., a parameter where the field is the empty string).
+func containsPattern(node Node) bool {
+	var result bool
+	f := func(node Node) {
+		switch v := node.(type) {
+		case Parameter:
+			if v.Field == "" {
+				result = true
+			}
+		}
+	}
+	visit(node, f)
+	return result
+}
+
+// partitionParameters constructs a parse tree to distinguish terms where
+// ordering is insignificant (e.g., "repo:foo file:bar") versus terms where
+// ordering may be significant (e.g., search patterns like "foo bar"). Search
+// patterns are parameters whose field is the empty string.
+//
+// The resulting tree defines an ordering relation on nodes in the following cases:
+// (1) When more than one search patterns exist at the same operator level, they
+// are concatenated in order.
+// (2) Any nonterminal node is concatenated (ordered in the tree) if its
+// descendents contain one or more search patterns.
+func partitionParameters(nodes []Node) []Node {
+	var patterns, unorderedParams []Node
+	for _, n := range nodes {
+		switch v := n.(type) {
+		case Parameter:
+			if v.Field == "" {
+				patterns = append(patterns, n)
+			} else {
+				unorderedParams = append(unorderedParams, n)
+			}
+		case Operator:
+			if containsPattern(n) {
+				patterns = append(patterns, n)
+			} else {
+				unorderedParams = append(unorderedParams, n)
+			}
+		}
+	}
+	if len(patterns) > 1 {
+		orderedPatterns := newOperator(patterns, Concat)
+		return newOperator(append(unorderedParams, orderedPatterns...), And)
+	}
+	return newOperator(append(unorderedParams, patterns...), And)
 }
 
 // scanParameterList scans for consecutive leaf nodes.
 func (p *parser) parseParameterList() ([]Node, error) {
 	var nodes []Node
+loop:
 	for {
 		if err := p.skipSpaces(); err != nil {
 			return nil, err
 		}
 		if p.done() {
-			break
+			break loop
 		}
 		switch {
 		case p.expect(LPAREN):
@@ -182,21 +293,18 @@ func (p *parser) parseParameterList() ([]Node, error) {
 			p.balanced--
 			if len(nodes) == 0 {
 				// Return a non-nil node if we parsed "()".
-				return []Node{Parameter{Value: ""}}, nil
+				nodes = []Node{Parameter{Value: ""}}
 			}
-			return nodes, nil
+			break loop
 		case p.match(AND), p.match(OR):
 			// Caller advances.
-			return nodes, nil
+			break loop
 		default:
-			value, err := p.scanParameter()
-			if err != nil {
-				return nil, err
-			}
-			nodes = append(nodes, Parameter{Value: value})
+			parameter := p.ParseParameter()
+			nodes = append(nodes, parameter)
 		}
 	}
-	return nodes, nil
+	return partitionParameters(nodes), nil
 }
 
 // reduce takes lists of left and right nodes and reduces them if possible. For example,
@@ -208,18 +316,18 @@ func reduce(left, right []Node, kind operatorKind) ([]Node, bool) {
 		return right, true
 	}
 
-	switch right[0].(type) {
+	switch term := right[0].(type) {
 	case Operator:
-		if kind == right[0].(Operator).Kind {
+		if kind == term.Kind {
 			// Reduce right node.
-			left = append(left, right[0].(Operator).Operands...)
+			left = append(left, term.Operands...)
 			if len(right) > 1 {
 				left = append(left, right[1:]...)
 			}
 			return left, true
 		}
 	case Parameter:
-		if right[0].(Parameter).Value == "" {
+		if term.Value == "" {
 			// Remove empty string parameter.
 			if len(right) > 1 {
 				return append(left, right[1:]...), true
@@ -228,7 +336,7 @@ func reduce(left, right []Node, kind operatorKind) ([]Node, bool) {
 		}
 		if operator, ok := left[0].(Operator); ok && operator.Kind == kind {
 			// Reduce left node.
-			return append(left[0].(Operator).Operands, right...), true
+			return append(operator.Operands, right...), true
 
 		}
 	}

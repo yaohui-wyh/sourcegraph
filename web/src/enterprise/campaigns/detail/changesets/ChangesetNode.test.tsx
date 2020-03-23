@@ -3,11 +3,11 @@ import React from 'react'
 import { createRenderer } from 'react-test-renderer/shallow'
 import { ChangesetNode } from './ChangesetNode'
 import {
-    IChangesetPlan,
     ChangesetReviewState,
     ChangesetState,
     IExternalChangeset,
     ChangesetCheckState,
+    IPatch,
 } from '../../../../../../shared/src/graphql/schema'
 import { Subject } from 'rxjs'
 
@@ -21,7 +21,7 @@ jest.mock('mdi-react/DeleteIcon', () => 'DeleteIcon')
 describe('ChangesetNode', () => {
     const history = H.createMemoryHistory({ keyLength: 0 })
     const location = H.createLocation('/campaigns')
-    const renderChangesetPlan = (enablePublishing: boolean): void => {
+    const renderPatch = (enablePublishing: boolean): void => {
         const renderer = createRenderer()
         renderer.render(
             <ChangesetNode
@@ -30,7 +30,7 @@ describe('ChangesetNode', () => {
                 location={location}
                 node={
                     {
-                        __typename: 'ChangesetPlan',
+                        __typename: 'Patch',
                         diff: {
                             fileDiffs: {
                                 __typename: 'PreviewFileDiffConnection',
@@ -46,20 +46,21 @@ describe('ChangesetNode', () => {
                             name: 'sourcegraph',
                             url: 'github.com/sourcegraph/sourcegraph',
                         },
-                    } as IChangesetPlan
+                    } as IPatch
                 }
                 campaignUpdates={new Subject<void>()}
                 enablePublishing={enablePublishing}
+                _now={new Date('2019-12-15')}
             />
         )
         const result = renderer.getRenderOutput()
         expect(result.props).toMatchSnapshot()
     }
-    test('renders a changesetplan with publishing disabled', () => {
-        renderChangesetPlan(false)
+    test('renders a patch with publishing disabled', () => {
+        renderPatch(false)
     })
-    test('renders a changesetplan with publishing enabled', () => {
-        renderChangesetPlan(true)
+    test('renders a patch with publishing enabled', () => {
+        renderPatch(true)
     })
     test('renders an externalchangeset', () => {
         const renderer = createRenderer()
@@ -79,6 +80,7 @@ describe('ChangesetNode', () => {
                         title: 'Remove lodash',
                         body: 'We should remove lodash',
                         checkState: ChangesetCheckState.FAILED,
+                        externalID: '123',
                         diff: {
                             fileDiffs: {
                                 diffStat: {
@@ -102,10 +104,12 @@ describe('ChangesetNode', () => {
                             name: 'sourcegraph',
                             url: 'github.com/sourcegraph/sourcegraph',
                         },
+                        updatedAt: new Date('2020-01-01').toISOString(),
                     } as IExternalChangeset
                 }
                 campaignUpdates={new Subject<void>()}
                 enablePublishing={false}
+                _now={new Date('2019-12-15')}
             />
         )
         const result = renderer.getRenderOutput()

@@ -102,8 +102,7 @@ export const searchFilterSuggestions: SearchFilterSuggestions = {
         ),
     },
     type: {
-        default: 'code',
-        values: [{ value: 'code' }, { value: 'diff' }, { value: 'commit' }, { value: 'symbol' }].map(
+        values: [{ value: 'diff' }, { value: 'commit' }, { value: 'symbol' }, { value: 'file' }, { value: 'path' }].map(
             assign({
                 type: FilterType.type,
             })
@@ -198,6 +197,14 @@ export const searchFilterSuggestions: SearchFilterSuggestions = {
     patterntype: {
         values: [{ value: 'literal' }, { value: 'structural' }, { value: 'regexp' }].map(
             assign({ type: FilterType.patterntype })
+        ),
+    },
+    index: {
+        default: 'yes',
+        values: [{ value: 'no' }, { value: 'only' }, { value: 'yes' }].map(
+            assign({
+                type: FilterType.index,
+            })
         ),
     },
 }

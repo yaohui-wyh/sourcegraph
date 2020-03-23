@@ -101,8 +101,7 @@ interface ConnectionDisplayProps {
 /**
  * Props for the FilteredConnection component's result nodes and associated summary/pagination controls.
  *
- * @template C The GraphQL connection type, such as GQL.IRepositoryConnection.
- * @template N The node type of the GraphQL connection, such as GQL.IRepository (if C is GQL.IRepositoryConnection)
+ * @template N The node type of the GraphQL connection, such as GQL.IRepository (if the connection is GQL.IRepositoryConnection)
  * @template NP Props passed to `nodeComponent` in addition to `{ node: N }`
  */
 interface ConnectionPropsCommon<N, NP = {}> extends ConnectionDisplayProps {
@@ -194,13 +193,12 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
 
         let summary: React.ReactFragment | undefined
         if (
-            !this.props.loading &&
             this.props.connection &&
             (!this.props.noSummaryIfAllNodesVisible || this.props.connection.nodes.length === 0 || hasNextPage)
         ) {
             if (totalCount !== null && totalCount > 0) {
                 summary = TotalCountSummaryComponent ? (
-                    <TotalCountSummaryComponent totalCount={totalCount}></TotalCountSummaryComponent>
+                    <TotalCountSummaryComponent totalCount={totalCount} />
                 ) : (
                     <p className="filtered-connection__summary">
                         <small>
@@ -256,8 +254,9 @@ class ConnectionNodes<C extends Connection<N>, N, NP = {}> extends React.PureCom
                 {!this.props.loading && !this.props.noShowMore && this.props.connection && hasNextPage && (
                     <button
                         type="button"
-                        className={`btn btn-secondary btn-sm filtered-connection__show-more ${this.props
-                            .showMoreClassName || ''}`}
+                        className={`btn btn-secondary btn-sm filtered-connection__show-more ${
+                            this.props.showMoreClassName || ''
+                        }`}
                         onClick={this.onClickShowMore}
                     >
                         Show more
@@ -334,6 +333,9 @@ interface FilteredConnectionProps<C extends Connection<N>, N, NP = {}>
 
     /** Called when the queryConnection Observable emits. */
     onUpdate?: (value: C | ErrorLike | undefined) => void
+
+    /** Don't show a loader on a refreshing table when a delay of 250ms on the request has passed */
+    noShowLoaderOnSlowLoad?: boolean
 }
 
 /**
@@ -556,10 +558,13 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
                         return (shouldRefresh
                             ? merge(
                                   result,
-                                  of({ connectionOrError: undefined, loading: true }).pipe(
-                                      delay(250),
-                                      takeUntil(result)
-                                  )
+                                  of({
+                                      connectionOrError:
+                                          this.props.noShowLoaderOnSlowLoad === true
+                                              ? this.state.connectionOrError
+                                              : undefined,
+                                      loading: true,
+                                  }).pipe(delay(250), takeUntil(result))
                               )
                             : result
                         ).pipe(map(stateUpdate => ({ shouldRefresh, ...stateUpdate })))
@@ -634,8 +639,10 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
 
         if (this.props.updates) {
             this.subscriptions.add(
-                this.props.updates.subscribe(c => {
-                    this.setState({ loading: true }, () => refreshRequests.next({ forceRefresh: true }))
+                this.props.updates.subscribe(() => {
+                    this.setState({ loading: this.props.noShowLoaderOnSlowLoad !== true }, () =>
+                        refreshRequests.next({ forceRefresh: true })
+                    )
                 })
             )
         }
@@ -644,7 +651,10 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
             this.componentUpdates
                 .pipe(
                     distinctUntilChanged((a, b) => a.updateOnChange === b.updateOnChange),
-                    filter(({ updateOnChange }) => updateOnChange !== undefined)
+                    filter(({ updateOnChange }) => updateOnChange !== undefined),
+                    // Skip the very first emission as the FilteredConnection already fetches on component creation.
+                    // Otherwise, 2 requests would be triggered immediately.
+                    skip(1)
                 )
                 .subscribe(() => {
                     this.setState({ loading: true, connectionOrError: undefined }, () =>
@@ -700,6 +710,7 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
         if (arg.visible !== 0 && arg.visible !== arg.first) {
             q.set('visible', String(arg.visible))
         }
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
         return q.toString()
     }
 
@@ -727,8 +738,9 @@ export class FilteredConnection<N, NP = {}, C extends Connection<N> = Connection
         const compactnessClass = `filtered-connection--${this.props.compact ? 'compact' : 'noncompact'}`
         return (
             <div
-                className={`filtered-connection e2e-filtered-connection ${compactnessClass} ${this.props.className ||
-                    ''}`}
+                className={`filtered-connection e2e-filtered-connection ${compactnessClass} ${
+                    this.props.className || ''
+                }`}
             >
                 {(!this.props.hideSearch || this.props.filters) && (
                     <Form className="filtered-connection__form" onSubmit={this.onSubmit}>

@@ -1,6 +1,7 @@
 import React from 'react'
 import * as H from 'history'
 import * as Monaco from 'monaco-editor'
+import { noop } from 'lodash'
 import { MonacoEditor } from '../../components/MonacoEditor'
 import { QueryState } from '../helpers'
 import { getProviders } from '../../../../shared/src/search/parser/providers'
@@ -125,6 +126,8 @@ function addSouregraphSearchCodeIntelligence(
     return subscriptions
 }
 
+const NOOP_KEYBINDINGS = [Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.KEY_F, Monaco.KeyMod.CtrlCmd | Monaco.KeyCode.Enter]
+
 /**
  * A search query input backed by the Monaco editor, allowing it to provide
  * syntax highlighting, hovers, completions and diagnostics for search queries.
@@ -209,7 +212,7 @@ export class MonacoQueryInput extends React.PureComponent<MonacoQueryInputProps>
                         onEditorCreated={this.onEditorCreated}
                         options={options}
                         border={false}
-                    ></MonacoEditor>
+                    />
                 </div>
                 <Toggles
                     {...this.props}
@@ -261,30 +264,26 @@ export class MonacoQueryInput extends React.PureComponent<MonacoQueryInputProps>
             )
         )
 
-        // Submit on enter when not showing suggestions.
+        // Submit on enter, hiding the suggestions widget if it's visible.
         this.subscriptions.add(
             toUnsubscribable(
                 editor.addAction({
                     id: 'submitOnEnter',
                     label: 'submitOnEnter',
                     keybindings: [Monaco.KeyCode.Enter],
-                    precondition: '!suggestWidgetVisible',
                     run: () => {
                         this.onSubmit()
+                        editor.trigger('submitOnEnter', 'hideSuggestWidget', [])
                     },
                 })
             )
         )
-        // Prevent inserting newlines.
-        this.subscriptions.add(
-            toUnsubscribable(
-                editor.onKeyDown(e => {
-                    if (e.keyCode === Monaco.KeyCode.Enter) {
-                        e.preventDefault()
-                    }
-                })
-            )
-        )
+
+        // Disable some default Monaco keybindings
+        for (const keybinding of NOOP_KEYBINDINGS) {
+            editor.addCommand(keybinding, noop)
+        }
+
         // Trigger a layout of the Monaco editor when its container gets resized.
         // The Monaco editor doesn't auto-resize with its container:
         // https://github.com/microsoft/monaco-editor/issues/28

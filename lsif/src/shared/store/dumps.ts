@@ -9,17 +9,13 @@ import { TableInserter } from '../database/inserter'
 import { visibleDumps, ancestorLineage, bidirectionalLineage } from '../models/queries'
 import { isDefined } from '../util'
 
-/**
- * The insertion metrics for Postgres.
- */
+/** The insertion metrics for Postgres. */
 const insertionMetrics = {
     durationHistogram: sharedMetrics.postgresInsertionDurationHistogram,
     errorsCounter: sharedMetrics.postgresQueryErrorsCounter,
 }
 
-/**
- * A wrapper around the database tables that control dumps and commits.
- */
+/** A wrapper around the database tables that control dumps and commits. */
 export class DumpManager {
     /**
      * Create a new `DumpManager` backed by the given database connection.
@@ -54,6 +50,19 @@ export class DumpManager {
      */
     public getDumpById(id: pgModels.DumpId): Promise<pgModels.LsifDump | undefined> {
         return instrumentQuery(() => this.connection.getRepository(pgModels.LsifDump).findOne({ id }))
+    }
+
+    /**
+     * Bulk get dumps by identifier.
+     *
+     * @param ids The dump identifiers.
+     */
+    public async getDumpsByIds(ids: pgModels.DumpId[]): Promise<Map<pgModels.DumpId, pgModels.LsifDump>> {
+        const dumps = await instrumentQuery(() =>
+            this.connection.getRepository(pgModels.LsifDump).createQueryBuilder().select().whereInIds(ids).getMany()
+        )
+
+        return new Map(dumps.map(d => [d.id, d]))
     }
 
     /**
