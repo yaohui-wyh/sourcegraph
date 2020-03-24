@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 
-	"github.com/sourcegraph/go-diff/diff"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
 	"github.com/sourcegraph/sourcegraph/enterprise/internal/codeintel/lsifserver/client"
+	"github.com/sourcegraph/sourcegraph/enterprise/internal/codeintel/resolvers/diff"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/lsif"
 	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
@@ -207,68 +208,38 @@ func makeCursor(cursors map[int64]string) (string, error) {
 	return base64.StdEncoding.EncodeToString(encoded), nil
 }
 
-type Position struct {
-	Line      int32
-	Character int32
-}
+func (r *lsifQueryResolver) adjustPosition(ctx context.Context, uploadCommit string, line, character int32) (*diff.Position, error) {
+	if uploadCommit == string(r.commit) {
+		return &diff.Position{
+			Line:      line,
+			Character: character,
+		}, nil
+	}
 
-func (r *lsifQueryResolver) adjustPosition(ctx context.Context, uploadCommit string, line, character int32) (*Position, error) {
-	lineDelta, err := r.getLineDelta(ctx, uploadCommit, line, character)
+	reader, err := r.diffReader(ctx, uploadCommit)
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 
-	return &Position{
-		Line:      line + lineDelta,
-		Character: character,
-	}, nil
+	return diff.AdjustPosition(reader, line, character)
 }
 
-func (r *lsifQueryResolver) getLineDelta(ctx context.Context, uploadCommit string, line int32) (int32, error) {
-	if uploadCommit == r.commit {
-		return 0, nil
-	}
-
-	hunks, err := r.getHunks(ctx, uploadCommit)
-	if err != nil {
-		return 0, err
-	}
-
-	lineDelta := int32(0)
-	for _, hunk := range hunks {
-
-		// Notes:
-		// Original File -> what's in the LSIF dump
-		// New file -> the requested file
-
-		// TODO: Fail if in middle of chunk
-
-		if hunk.NewStartLine > line {
-			break
-		}
-
-		lineDelta += (hunk.OrigLines - hunk.NewLines)
-	}
-
-	return lineDelta
-}
-
-func (r *lsifQueryResolver) getHunks(ctx context.Context, uploadCommit string) ([]*diff.Hunk, error) {
+func (r lsifQueryResolver) diffReader(ctx context.Context, uploadCommit string) (io.ReadCloser, error) {
 	cachedRepo, err := backend.CachedGitRepo(ctx, r.repositoryResolver.Type())
 	if err != nil {
 		return nil, err
 	}
 
-	rdr, err := git.ExecReader(ctx, *cachedRepo, []string{"diff", uploadCommit, r.commit, "--", r.path})
-	if err != nil {
-		return nil, err
-	}
-	defer rdr.Close()
-
-	diff, err := diff.NewFileDiffReader(rdr).Read()
-	if err != nil {
-		return nil, err
-	}
-
-	return diff.hunks, nil
+	return git.ExecReader(
+		ctx,
+		*cachedRepo,
+		[]string{
+			"diff",
+			uploadCommit,
+			string(r.commit),
+			"--",
+			r.path,
+		},
+	)
 }
