@@ -552,7 +552,7 @@ func (r *searchResolver) logSearchLatency(ctx context.Context, durationMs int32)
 	}
 }
 
-func (r *searchResolver) Results(ctx context.Context) (*SearchResultsResolver, error) {
+func (r *searchResolver) evaluateLeaf(ctx context.Context) (*SearchResultsResolver, error) {
 	// If the request is a paginated one, we handle it separately. See
 	// paginatedResults for more details.
 	if r.pagination != nil {
@@ -584,6 +584,92 @@ func (r *searchResolver) Results(ctx context.Context) (*SearchResultsResolver, e
 	searchResponseCounter.WithLabelValues(status, alertType).Inc()
 
 	return rr, err
+}
+
+func union(left, right *SearchResultsResolver) (*SearchResultsResolver, error) {
+	// TODO: union time, alerts, searchResultsCommon
+	var resolver *SearchResultsResolver
+	if left != nil && left.SearchResults != nil && right.SearchResults != nil {
+		left.SearchResults = append(left.SearchResults, right.SearchResults...)
+		resolver = left
+	} else if right != nil && right.SearchResults != nil {
+		resolver = right
+	}
+	return resolver, nil
+}
+
+func (r *searchResolver) evaluateOperator(ctx context.Context, operator query.Operator) (*SearchResultsResolver, error) {
+	return nil, nil
+}
+
+func (r *searchResolver) evaluate(ctx context.Context, scopeParameters []query.Parameter, pattern query.Node) (*SearchResultsResolver, error) {
+	result := &SearchResultsResolver{}
+	var new *SearchResultsResolver
+	var err error
+	for _, node := range nodes {
+		switch term := node.(type) {
+		case query.Operator:
+			new, err = r.evaluateOperator(ctx, term)
+			if err != nil {
+				return nil, err
+			}
+			if new != nil {
+				result, err = union(result, new)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return result, nil
+
+}
+
+// isPattern returns true if every leaf node in a tree root at node is a search pattern.
+func isPatternExpression(node query.Node) bool {
+	result := true
+	query.VisitParameter([]query.Node{node}, func(field, _ string, _ bool) {
+		if field != "" && field != "content" {
+			result = false
+		}
+	})
+	return result
+}
+
+func partitionSearchPatterns(nodes []query.Node) (parameters []query.Parameter, pattern query.Node, err error) {
+	var alreadySawPattern bool
+	for _, node := range nodes {
+		if isPatternExpression(node) {
+			if !alreadySawPattern {
+				alreadySawPattern = true
+				pattern = node
+			} else {
+				return nil, nil, errors.New("query contains multiple distinct search patterns; cannot evaluate")
+			}
+		}
+		if term, ok := node.(query.Parameter); ok {
+			parameters = append(parameters, term)
+		} else {
+			return nil, nil, errors.New("query contains and/or expressions for non-pattern parameters; cannot evaluate")
+
+		}
+	}
+	return parameters, pattern, nil
+}
+
+func (r *searchResolver) Results(ctx context.Context) (*SearchResultsResolver, error) {
+	switch q := r.query.(type) {
+	case query.OrdinaryQuery:
+		return r.evaluateLeaf(ctx)
+	case query.AndOrQuery:
+		scopeParameters, searchPatterns, err := partitionSearchPatterns(q.Query)
+		if err != nil {
+			return nil, err
+		}
+		return r.evaluate(ctx, q.Query)
+	}
+	// Unreachable, matching is exhaustive.
+	return nil, nil
 }
 
 // resultsWithTimeoutSuggestion calls doResults, and in case of deadline
