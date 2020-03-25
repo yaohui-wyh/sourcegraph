@@ -55,7 +55,7 @@ func adjustPosition(
 
 // adjustPositionFromDiff transforms the position denoted by `line` and `character` in the
 // *original file* into a position in the *new file* according to the git diff output contained
-//.in the given reader. This function returns a nil position if the line has been edited or does
+// in the given reader. This function returns a nil position if the line has been edited or does
 // not exist in the new file.
 func adjustPositionFromDiff(reader io.Reader, line, character int32) (*Position, error) {
 	// Extract hunks from the git diff output
