@@ -96,12 +96,13 @@ func adjustPositionFromHunk(hunk *diff.Hunk, line, character int32) (*Position, 
 		return &Position{Line: line + relativeDifference, Character: character}, nil
 	}
 
-	// Create two *fingers* pointing at the first line of this hunk in each file
+	// Create two fingers pointing at the first line of this hunk in each file. Then,
+	// bump each of these cursors for every line in hunk body that is attributed
+	// to the corresponding file.
+
 	origFileOffset := hunk.OrigStartLine
 	newFileOffset := hunk.NewStartLine
 
-	// Bump each of these cursors for every line in hunk body that is attributed
-	// to the corresponding file.
 	for _, bodyLine := range strings.Split(string(hunk.Body), "\n") {
 		// Bump original file offset unless it's an addition in the new file
 		added := strings.HasPrefix(bodyLine, "+")
