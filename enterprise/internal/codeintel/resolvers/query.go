@@ -4,15 +4,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"io"
 
-	"github.com/sourcegraph/sourcegraph/cmd/frontend/backend"
 	"github.com/sourcegraph/sourcegraph/cmd/frontend/graphqlbackend"
 	"github.com/sourcegraph/sourcegraph/enterprise/internal/codeintel/lsifserver/client"
-	"github.com/sourcegraph/sourcegraph/enterprise/internal/codeintel/resolvers/diff"
 	"github.com/sourcegraph/sourcegraph/internal/api"
 	"github.com/sourcegraph/sourcegraph/internal/lsif"
-	"github.com/sourcegraph/sourcegraph/internal/vcs/git"
 )
 
 type lsifQueryResolver struct {
@@ -28,9 +24,12 @@ var _ graphqlbackend.LSIFQueryResolver = &lsifQueryResolver{}
 
 func (r *lsifQueryResolver) Definitions(ctx context.Context, args *graphqlbackend.LSIFQueryPositionArgs) (graphqlbackend.LocationConnectionResolver, error) {
 	for _, upload := range r.uploads {
-		position, err := r.adjustPosition(ctx, upload.Commit, args.Line, args.Character)
+		position, err := adjustPosition(ctx, r.repositoryResolver.Type(), upload.Commit, string(r.commit), r.path, args.Line, args.Character)
 		if err != nil {
 			return nil, err
+		}
+		if position == nil {
+			continue
 		}
 
 		opts := &struct {
@@ -81,9 +80,12 @@ func (r *lsifQueryResolver) References(ctx context.Context, args *graphqlbackend
 
 	var allLocations []*lsif.LSIFLocation
 	for _, upload := range r.uploads {
-		position, err := r.adjustPosition(ctx, upload.Commit, args.Line, args.Character)
+		position, err := adjustPosition(ctx, r.repositoryResolver.Type(), upload.Commit, string(r.commit), r.path, args.Line, args.Character)
 		if err != nil {
 			return nil, err
+		}
+		if position == nil {
+			continue
 		}
 
 		opts := &struct {
@@ -139,9 +141,12 @@ func (r *lsifQueryResolver) References(ctx context.Context, args *graphqlbackend
 
 func (r *lsifQueryResolver) Hover(ctx context.Context, args *graphqlbackend.LSIFQueryPositionArgs) (graphqlbackend.HoverResolver, error) {
 	for _, upload := range r.uploads {
-		position, err := r.adjustPosition(ctx, upload.Commit, args.Line, args.Character)
+		position, err := adjustPosition(ctx, r.repositoryResolver.Type(), upload.Commit, string(r.commit), r.path, args.Line, args.Character)
 		if err != nil {
 			return nil, err
+		}
+		if position == nil {
+			continue
 		}
 
 		text, lspRange, err := client.DefaultClient.Hover(ctx, &struct {
@@ -206,40 +211,4 @@ func makeCursor(cursors map[int64]string) (string, error) {
 		return "", err
 	}
 	return base64.StdEncoding.EncodeToString(encoded), nil
-}
-
-func (r *lsifQueryResolver) adjustPosition(ctx context.Context, uploadCommit string, line, character int32) (*diff.Position, error) {
-	if uploadCommit == string(r.commit) {
-		return &diff.Position{
-			Line:      line,
-			Character: character,
-		}, nil
-	}
-
-	reader, err := r.diffReader(ctx, uploadCommit)
-	if err != nil {
-		return nil, err
-	}
-	defer reader.Close()
-
-	return diff.AdjustPosition(reader, line, character)
-}
-
-func (r lsifQueryResolver) diffReader(ctx context.Context, uploadCommit string) (io.ReadCloser, error) {
-	cachedRepo, err := backend.CachedGitRepo(ctx, r.repositoryResolver.Type())
-	if err != nil {
-		return nil, err
-	}
-
-	return git.ExecReader(
-		ctx,
-		*cachedRepo,
-		[]string{
-			"diff",
-			uploadCommit,
-			string(r.commit),
-			"--",
-			r.path,
-		},
-	)
 }

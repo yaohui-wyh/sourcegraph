@@ -1,4 +1,4 @@
-package diff
+package resolvers
 
 import (
 	"bytes"
@@ -69,7 +69,7 @@ index 49bcbf86b7ba..d135cd54e700 100644
         }
 `
 
-func TestAdjustPosition(t *testing.T) {
+func TestAdjustPositionFromDiff(t *testing.T) {
 	testCases := []struct {
 		diff         string
 		line         int32
@@ -114,7 +114,7 @@ func TestAdjustPosition(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		adjusted, err := AdjustPosition(bytes.NewReader([]byte(testCase.diff)), testCase.line, 10)
+		adjusted, err := adjustPositionFromDiff(bytes.NewReader([]byte(testCase.diff)), testCase.line, 10)
 		if err != nil {
 			t.Errorf("Unexpected error in test case #%d: %s", i+1, err)
 		}
