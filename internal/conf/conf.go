@@ -68,9 +68,9 @@ var (
 	configurationServerFrontendOnlyInitialized = make(chan struct{})
 )
 
-func init() {
+func initDefaultClient() *client {
 	clientStore := newStore()
-	defaultClient = &client{store: clientStore}
+	defaultClient := &client{store: clientStore}
 
 	mode := getMode()
 
@@ -88,7 +88,7 @@ func init() {
 		if err != nil {
 			log.Fatalf("received error when setting up the store for the default client during test, err :%s", err)
 		}
-		return
+		return defaultClient
 	}
 
 	// The default client is started in InitConfigurationServerFrontendOnly in
@@ -97,6 +97,8 @@ func init() {
 		go defaultClient.continuouslyUpdate(nil)
 		close(configurationServerFrontendOnlyInitialized)
 	}
+
+	return defaultClient
 }
 
 // cachedConfigurationSource caches reads for a specified duration to reduce
@@ -150,6 +152,9 @@ func InitConfigurationServerFrontendOnly(source ConfigurationSource) *Server {
 		panic("cannot call this function while in client mode")
 	}
 
+	defaultClientOnce.Do(func() {})
+	defaultClientVal := &client{store: newStore()}
+
 	server := NewServer(&cachedConfigurationSource{
 		source: source,
 		// conf.Watch poll rate is 5s, so we use half that.
@@ -160,9 +165,9 @@ func InitConfigurationServerFrontendOnly(source ConfigurationSource) *Server {
 	// Install the passthrough configuration source for defaultClient. This is
 	// so that the frontend does not request configuration from itself via HTTP
 	// and instead only relies on the DB.
-	defaultClient.passthrough = source
+	defaultClientVal.passthrough = source
 
-	go defaultClient.continuouslyUpdate(nil)
+	go defaultClientVal.continuouslyUpdate(nil)
 	close(configurationServerFrontendOnlyInitialized)
 
 	startSiteConfigEscapeHatchWorker(source)
